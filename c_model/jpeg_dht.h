@@ -16,7 +16,9 @@
 #define DHT_TABLE_CX_AC     0x11
 #define DHT_TABLE_CX_AC_IDX 3
 
-#define dprintf
+#ifndef dprintf
+#define dprintf(...)
+#endif
 
 //-----------------------------------------------------------------------------
 // jpeg_dqt:

@@ -11,11 +11,23 @@
 #include "jpeg_bit_buffer.h"
 #include "jpeg_mcu_block.h"
 
-static jpeg_dqt        m_dqt;
-static jpeg_dht        m_dht;
-static jpeg_idct       m_idct;
-static jpeg_bit_buffer m_bit_buffer;
-static jpeg_mcu_block  m_mcu_dec(&m_bit_buffer, &m_dht);
+struct jpeg_state
+{
+	jpeg_dqt        m_dqt;
+	jpeg_dht        m_dht;
+	jpeg_idct       m_idct;
+	jpeg_bit_buffer m_bit_buffer;
+	jpeg_mcu_block  m_mcu_dec;
+
+
+	jpeg_state() :
+	 m_bit_buffer(bit_buffer, sizeof(bit_buffer)),
+	 m_mcu_dec(&m_bit_buffer, &m_dht)
+	{
+	}
+private:
+	uint8_t bit_buffer[1<<20];
+};
 
 static uint16_t m_width;
 static uint16_t m_height;
@@ -39,7 +51,6 @@ static uint8_t *m_output_r;
 static uint8_t *m_output_g;
 static uint8_t *m_output_b;
 
-#define dprintf
 #define dprintf_blk(_name, _arr, _max) for (int __i=0;__i<_max;__i++) { dprintf("%s: %d -> %d\n", _name, __i, _arr[__i]); }
 
 //-----------------------------------------------------------------------------
@@ -109,8 +120,14 @@ static void ConvertYUV2RGB(int block_num, int *y, int *cb, int *cr)
 //-----------------------------------------------------------------------------
 // DecodeImage: Decode image data section (supports 4:4:4, 4:2:0, monochrom)
 //-----------------------------------------------------------------------------
-static bool DecodeImage(void)
+static bool DecodeImage(jpeg_state& st)
 {
+    jpeg_dqt& m_dqt = st.m_dqt;
+    jpeg_dht& m_dht = st.m_dht;
+    jpeg_idct& m_idct = st.m_idct;
+    jpeg_bit_buffer& m_bit_buffer = st.m_bit_buffer;
+    jpeg_mcu_block& m_mcu_dec = st.m_mcu_dec;
+	
     int16_t dc_coeff_Y = 0;
     int16_t dc_coeff_Cb= 0;
     int16_t dc_coeff_Cr= 0;
@@ -270,6 +287,13 @@ int main(int argc, char* argv[])
         return -1;
     }
 
+    static jpeg_state st;
+    jpeg_dqt& m_dqt = st.m_dqt;
+    jpeg_dht& m_dht = st.m_dht;
+    jpeg_idct& m_idct = st.m_idct;
+    jpeg_bit_buffer& m_bit_buffer = st.m_bit_buffer;
+    jpeg_mcu_block& m_mcu_dec = st.m_mcu_dec;
+	
     const char *src_image = argv[1];
     const char *dst_image = argv[2];
 
@@ -477,6 +501,8 @@ int main(int argc, char* argv[])
             //-----------------------------------------------------------------------
             // Process data segment
             //-----------------------------------------------------------------------
+            if(last_b == 0xFF)
+                printf("Reset bit_buffer to %d:\n", len);
             m_bit_buffer.reset(len);
             while (i < len)
             {
@@ -491,7 +517,7 @@ int main(int argc, char* argv[])
                 }
             }
 
-            decode_done = DecodeImage();
+            decode_done = DecodeImage(st);
         }
         //-----------------------------------------------------------------------------
         // Unsupported / Skipped

@@ -10,7 +10,9 @@
 #include "jpeg_bit_buffer.h"
 #include "jpeg_dht.h"
 
-#define dprintf
+#ifndef dprintf
+#define dprintf(...)
+#endif
 
 //-----------------------------------------------------------------------------
 // jpeg_mcu_block:

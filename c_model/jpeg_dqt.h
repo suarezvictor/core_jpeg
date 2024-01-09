@@ -21,7 +21,9 @@ static const int m_zigzag_table[]=
     0
 };
 
-#define dprintf
+#ifndef dprintf
+#define dprintf(...)
+#endif
 
 //-----------------------------------------------------------------------------
 // jpeg_dqt:
