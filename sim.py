@@ -173,19 +173,24 @@ new dma output x  1279 y   719
 
 
 class JPEGCore(Module, AutoCSR):
-    def __init__(self, rdport=None, debug=True):
+    def __init__(self, rdport=None, wrport=None, debug=True):
         self.inport_accept = Signal()
         self.inport_ready = Signal()
         self.idle = Signal()
 
+        self.params = dict(
+            i_clk_i = ClockSignal("sys"),
+            i_rst_i = ResetSignal("sys"),
+        )
+
         if rdport is None:
             self.add_csrs(inputcsr=True)
-            self.params = dict(
+            self.params.update(dict(
                 i_inport_valid_i = self.inport_valid.re, #will be asserted for 1 cycle when written
                 i_inport_data_i = self.inport_data.storage,
                 i_inport_last_i = self.inport_last.storage,
                 i_inport_strb_i = self.inport_strb.storage
-            )
+            ))
             if debug:
                 self.sync += If(self.inport_valid.re,
                     Display("new input data %x (inport_accept.status was %d)", self.inport_data.storage, self.inport_accept.status))
@@ -195,17 +200,15 @@ class JPEGCore(Module, AutoCSR):
 
             self.add_csrs(inputcsr=False)
             source = self.reader.source
-            self.params = dict(
+            self.params.update(dict(
                 i_inport_valid_i = source.valid,
                 i_inport_data_i = source.data,
                 i_inport_last_i = Constant(0), #TODO: try source.last & self.inport_accept,
                 i_inport_strb_i = Constant(0xF)
-            )
+            ))
 
 
         self.params.update(dict(
-            i_clk_i = ClockSignal("sys"),
-            i_rst_i = ResetSignal("sys"),
             i_outport_accept_i = self.outport_accept.storage, #output port is ready to accept pixels
 
             o_inport_accept_o = self.inport_accept, #input port is ready to accept JPEG data (asserted each 4 bytes written)
@@ -220,7 +223,7 @@ class JPEGCore(Module, AutoCSR):
             o_idle_o = self.idle # useful to know when it's done
         ))
 
-        self.comb += self.inport_ready.eq(self.inport_accept | (self.idle & reader._offset.status ))
+        self.comb += self.inport_ready.eq(self.inport_accept | (self.idle & (reader._offset.status == Constant(0)) ))
         if rdport is None:
             self.comb += self.inport_accept.status.eq(self.inport_ready) #if idle always accept data
         else:
