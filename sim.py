@@ -113,24 +113,102 @@ from litex.soc.cores.video import video_data_layout
 #define CSR_JPEG_CORE_OUTPORT_PIXEL_G_ADDR (CSR_BASE + 0x1030L) //0x80 at reset
 #define CSR_JPEG_CORE_OUTPORT_PIXEL_B_ADDR (CSR_BASE + 0x1034L) //0x80 at reset
 #define CSR_JPEG_CORE_IDLE_ADDR (CSR_BASE + 0x1038L) //1 at reset
+
+
+alternative with DMA:
+
+#define CSR_JPEG_CORE_READER_BASE_ADDR (CSR_BASE + 0x1000L)
+#define CSR_JPEG_CORE_READER_LENGTH_ADDR (CSR_BASE + 0x1004L)
+#define CSR_JPEG_CORE_READER_ENABLE_ADDR (CSR_BASE + 0x1008L)
+#define CSR_JPEG_CORE_READER_DONE_ADDR (CSR_BASE + 0x100cL)
+#define CSR_JPEG_CORE_READER_LOOP_ADDR (CSR_BASE + 0x1010L)
+#define CSR_JPEG_CORE_READER_OFFSET_ADDR (CSR_BASE + 0x1014L)
+#define CSR_JPEG_CORE_OUTPORT_ACCEPT_ADDR (CSR_BASE + 0x1018L)
+#define CSR_JPEG_CORE_OUTPORT_VALID_ADDR (CSR_BASE + 0x101cL)
+#define CSR_JPEG_CORE_OUTPORT_WIDTH_ADDR (CSR_BASE + 0x1020L)
+#define CSR_JPEG_CORE_OUTPORT_HEIGHT_ADDR (CSR_BASE + 0x1024L)
+#define CSR_JPEG_CORE_OUTPORT_PIXEL_X_ADDR (CSR_BASE + 0x1028L)
+#define CSR_JPEG_CORE_OUTPORT_PIXEL_Y_ADDR (CSR_BASE + 0x102cL)
+#define CSR_JPEG_CORE_OUTPORT_PIXEL_R_ADDR (CSR_BASE + 0x1030L)
+#define CSR_JPEG_CORE_OUTPORT_PIXEL_G_ADDR (CSR_BASE + 0x1034L)
+#define CSR_JPEG_CORE_OUTPORT_PIXEL_B_ADDR (CSR_BASE + 0x1038L)
+#define CSR_JPEG_CORE_IDLE_STATUS_ADDR (CSR_BASE + 0x103cL)
+
+
+litex> mem_read 0x40000000 64 // this dumps the JPEG header
+litex> mem_write 0x40C00000 0xFF8040 921600 4 //this fills the framebuffer
+litex> mem_read 0xf0001000 0x40 //this shows the core registers
+
+mem_write 0xf0001000 0x40000000 //address
+mem_write 0xf0001004 174632 // 174629 bytes rounded up to dword
+mem_write 0xf0001008 1 // enable DMA
+
+
+new dma output x  1272 y   717
+new dma output x  1273 y   717
+new dma output x  1274 y   717
+new dma output x  1275 y   717
+new dma output x  1276 y   717
+new dma output x  1277 y   717
+new dma output x  1278 y   717
+new dma output x  1279 y   717
+new dma output x  1272 y   718
+new dma output x  1273 y   718
+new dma output x  1274 y   718
+new dma output x  1275 y   718
+new dma output x  1276 y   718
+new dma output x  1277 y   718
+new dma output x  1278 y   718
+new dma output x  1279 y   718
+new dma output x  1272 y   719
+new dma output x  1273 y   719
+new dma output x  1274 y   719
+new dma output x  1275 y   719
+new dma output x  1276 y   719
+new dma output x  1277 y   719
+new dma output x  1278 y   719
+new dma output x  1279 y   719
+
 """
 
 
 class JPEGCore(Module, AutoCSR):
-    def __init__(self, debug=True):
-        self.add_csrs()
-        inport_accept = Signal()
+    def __init__(self, rdport=None, debug=True):
+        self.inport_accept = Signal()
+        self.inport_ready = Signal()
+        self.idle = Signal()
 
-        self.params = dict(
+        if rdport is None:
+            self.add_csrs(inputcsr=True)
+            self.params = dict(
+                i_inport_valid_i = self.inport_valid.re, #will be asserted for 1 cycle when written
+                i_inport_data_i = self.inport_data.storage,
+                i_inport_last_i = self.inport_last.storage,
+                i_inport_strb_i = self.inport_strb.storage
+            )
+            if debug:
+                self.sync += If(self.inport_valid.re,
+                    Display("new input data %x (inport_accept.status was %d)", self.inport_data.storage, self.inport_accept.status))
+        else:
+            from litedram.frontend.dma import LiteDRAMDMAReader
+            self.submodules.reader = reader = LiteDRAMDMAReader(rdport, with_csr=True)
+
+            self.add_csrs(inputcsr=False)
+            source = self.reader.source
+            self.params = dict(
+                i_inport_valid_i = source.valid,
+                i_inport_data_i = source.data,
+                i_inport_last_i = Constant(0), #TODO: try source.last & self.inport_accept,
+                i_inport_strb_i = Constant(0xF)
+            )
+
+
+        self.params.update(dict(
             i_clk_i = ClockSignal("sys"),
             i_rst_i = ResetSignal("sys"),
-            i_inport_valid_i = self.inport_valid.re, #will be asserted for 1 cycle when written
-            i_inport_data_i = self.inport_data.storage,
-            i_inport_strb_i = self.inport_strb.storage,
-            i_inport_last_i = self.inport_last.storage,
             i_outport_accept_i = self.outport_accept.storage, #output port is ready to accept pixels
 
-            o_inport_accept_o = inport_accept, #input port is ready to accept JPEG data (asserted each 4 bytes written)
+            o_inport_accept_o = self.inport_accept, #input port is ready to accept JPEG data (asserted each 4 bytes written)
             o_outport_valid_o = self.outport_valid.status,
             o_outport_width_o = self.outport_width.status,
             o_outport_height_o = self.outport_height.status,
@@ -139,22 +217,36 @@ class JPEGCore(Module, AutoCSR):
             o_outport_pixel_r_o = self.outport_pixel_r.status,
             o_outport_pixel_g_o = self.outport_pixel_g.status,
             o_outport_pixel_b_o = self.outport_pixel_b.status,
-            o_idle_o = self.idle.status # useful to know when it's done
-        )
-        self.comb += self.inport_accept.status.eq(inport_accept | self.idle.status) #if idle always accept data
+            o_idle_o = self.idle # useful to know when it's done
+        ))
 
-        if debug:
-            self.sync += If(self.inport_valid.re,
-                Display("new input data %x (inport_accept.status was %d)", self.inport_data.storage, self.inport_accept.status))
+        self.comb += self.inport_ready.eq(self.inport_accept | (self.idle & reader._offset.status ))
+        if rdport is None:
+            self.comb += self.inport_accept.status.eq(self.inport_ready) #if idle always accept data
+        else:
+            self.comb += source.ready.eq(self.inport_ready)
+            if debug:
+                #self.sync += If(source.valid,
+                #    Display("new dma input data %x (inport_accept was %d, ready %d, idle %d, offset)",
+                #        source.data, self.inport_accept, self.inport_ready, self.idle, reader._offset.status))
 
-    def add_csrs(self):
-        self.inport_valid	 = CSRStorage(reset=0)
-        self.inport_data	 = CSRStorage(32, reset=0)
-        self.inport_strb	 = CSRStorage(4, reset=0xF)
-        self.inport_last	 = CSRStorage(reset=0)
+                self.sync += If(self.outport_valid.status,
+                    Display("new dma output x %d y %d",
+                        self.outport_pixel_x.status, self.outport_pixel_y.status))
+
+        self.comb += self.idle_status.status.eq(self.idle)
+        self.specials += Instance("jpeg_core", **self.params)
+
+
+    def add_csrs(self, inputcsr=True):
+        if inputcsr:
+            self.inport_valid	 = CSRStorage(reset=0)
+            self.inport_data	 = CSRStorage(32, reset=0)
+            self.inport_strb	 = CSRStorage(4, reset=0xF)
+            self.inport_last	 = CSRStorage(reset=0)
+            self.inport_accept	 = CSRStatus()
+        
         self.outport_accept	 = CSRStorage(reset=1)
-
-        self.inport_accept	 = CSRStatus()
         self.outport_valid	 = CSRStatus()
         self.outport_width	 = CSRStatus(16)
         self.outport_height	 = CSRStatus(16)
@@ -163,11 +255,7 @@ class JPEGCore(Module, AutoCSR):
         self.outport_pixel_r = CSRStatus(8)
         self.outport_pixel_g = CSRStatus(8)
         self.outport_pixel_b = CSRStatus(8)
-        self.idle	 = CSRStatus()
-
-    def do_finalize(self):
-        self.specials += Instance("jpeg_core", **self.params)
-   
+        self.idle_status	 = CSRStatus()
 
 
 SYS_CLK_FREQ = 1e6
@@ -330,7 +418,8 @@ class SimSoC(SoCCore):
             self.add_video_framebuffer(phy=self.videophy, timings="1280x720@60Hz", format="rgb888", clock_domain="pix")
             self.videophy.comb += video_pads.valid.eq(~self.video_framebuffer.underflow)
 
-            self.submodules.jpeg_core = JPEGCore() #add JPEG module
+            rdport = self.sdram.crossbar.get_port(mode="read", data_width=32)
+            self.submodules.jpeg_core = JPEGCore(rdport=rdport) #add JPEG module
 
 
 # Build --------------------------------------------------------------------------------------------
@@ -413,93 +502,7 @@ def main():
         **verilator_build_kwargs,
     )
 
-"""
-0x40000000
-ff d8 ff e0
-00 10 4a 46
-49 46 00 01
-01 01 00 48
-0x40000010
-00 48 00 00
-ff e2 02 b0
-49 43 43 5f
-50 52 4f 46
-0x40000020
-49 4c 45 00
-01 01 00 00
-02 a0 6c 63
-6d 73 04 30
-0x40000030
-00 00 6d 6e 74 72 52 47 42 20 58 59 5a 20 07 e8  ..mntrRGB XYZ ..
-
-
-./sim.py --sdram-init autorun.jpg
-
-litex> mem_read 0x40000000 64 // this dumps the JPEG header
-litex> mem_write 0x40C00000 0xFF8040 921600 4 //this fills the framebuffer
-litex> mem_read 0xf0001000 0x3c //this shows the core registers
-
-litex> mem_write 0xf0001004 0xe0ffd8ff //set data word
-litex> mem_write 0xf0001000 0 //send 1st word
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-litex> mem_write 0xf0001004 0x464a1000 
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-litex> mem_write 0xf0001004 0x01004649
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-litex> mem_write 0xf0001004 0x48000101
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-litex> mem_write 0xf0001004 0x00004800
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-litex> mem_write 0xf0001004 0xb002e2ff
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-litex> mem_write 0xf0001004 0x5f434349 
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-litex> mem_write 0xf0001004 0x464f5250 
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-litex> mem_write 0xf0001004 0x00454c49
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-litex> mem_write 0xf0001004 0x00000101
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-litex> mem_write 0xf0001000 0
-
-"""
+#./sim.py --sdram-init autorun.jpg
 
 if __name__ == "__main__":
     main()
