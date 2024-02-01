@@ -52,20 +52,23 @@ with DMA:
 #define CSR_JPEG_CORE_READER_LOOP_ADDR (CSR_BASE + 0x1010L)
 #define CSR_JPEG_CORE_READER_OFFSET_ADDR (CSR_BASE + 0x1014L)
 #define CSR_JPEG_CORE_WRITER_BASE_ADDR (CSR_BASE + 0x1018L)
-#define CSR_JPEG_CORE_IDLE_STATUS_ADDR (CSR_BASE + 0x101cL)
-#define CSR_JPEG_CORE_OUTPORT_WIDTH_ADDR (CSR_BASE + 0x1020L)
-#define CSR_JPEG_CORE_OUTPORT_HEIGHT_ADDR (CSR_BASE + 0x1024L)
+#define CSR_JPEG_CORE_WRITER_STRIDE_ADDR (CSR_BASE + 0x101cL)
+#define CSR_JPEG_CORE_IDLE_STATUS_ADDR (CSR_BASE + 0x1020L)
+#define CSR_JPEG_CORE_OUTPORT_WIDTH_ADDR (CSR_BASE + 0x1024L)
+#define CSR_JPEG_CORE_OUTPORT_HEIGHT_ADDR (CSR_BASE + 0x1028L)
 
 
 litex> mem_read 0x40000000 64 // this dumps the JPEG header
 litex> mem_write 0x40C00000 0xFF8040 921600 4 //this fills the framebuffer
-litex> mem_read 0xf0001000 0x28 //this shows the core registers
+litex> mem_read 0xf0001000 0x2c //this shows the core registers
 
 litex> mem_write 0xf0001000 0x40000000 //reader address
-litex> mem_write 0xf0001004 174632 // 174629 bytes rounded up to dword
+litex> mem_write 0xf0001004 174632 // 174629 bytes rounded up to dword (90304 for sample480p.jpg)
 litex> mem_write 0xf0001018 0x40c00000 //writer address
+litex> mem_write 0xf000101c 5120 //writer stride
 litex> mem_write 0xf0001008 1 // enable DMA
-litex> mem_read 0xf000101c //poll idle status
+litex> mem_read 0xf0001020 //poll idle status
+litex> mem_write 0xf0001008 0 // disable DMA
 """
 
 class JPEGCore(Module, AutoCSR):
@@ -138,9 +141,9 @@ class JPEGCore(Module, AutoCSR):
 
             self.comb += [
                 writer.sink.valid.eq(self.outport_valid), #write
-                self.pixel_offset.eq(self.outport_pixel_x + self.outport_pixel_y * self.outport_width.status),
+                self.pixel_offset.eq(self.outport_pixel_x + self.outport_pixel_y * self.writer_stride.storage[2:]),
                 writer.sink.address.eq(self.writer_base.storage[2:] + self.pixel_offset),
-                writer.sink.data.eq(Cat(self.outport_pixel_b, self.outport_pixel_g, self.outport_pixel_r))
+                writer.sink.data.eq(Cat(self.outport_pixel_b, self.outport_pixel_g, self.outport_pixel_r, 0xFF))
             ]
             if debug:
                 self.sync += If(writer.sink.valid, Display("DMA write at offset %d, address %x, ready %d", self.pixel_offset, writer.sink.address, writer.sink.ready))
@@ -178,6 +181,7 @@ class JPEGCore(Module, AutoCSR):
     def add_csrs(self, inputcsr=False, outputcsr=False):
         if not outputcsr:
             self.writer_base = CSRStorage(32)
+            self.writer_stride = CSRStorage(16)
 
         self.idle_status	 = CSRStatus()
         self.outport_width	 = CSRStatus(16)
